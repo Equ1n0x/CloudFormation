@@ -254,6 +254,7 @@ Resources:
           - !Ref DomainName
         DefaultRootObject: index.html
         PriceClass: !Ref PriceClass
+        HttpVersion: http2
         Origins:
           -
             DomainName: !Join ["", [!Ref DomainName, ".", !FindInMap [RegionMap, !Ref "AWS::Region", websiteendpoint]]]
@@ -261,7 +262,11 @@ Resources:
             CustomOriginConfig:
               HTTPPort: 80
               HTTPSPort: 443
-              OriginProtocolPolicy: http-only
+              OriginKeepaliveTimeout: 5
+              OriginProtocolPolicy: 'http-only'
+              OriginReadTimeout: 30
+              OriginSSLProtocols:
+                - TLSv1.2
         DefaultCacheBehavior:
           TargetOriginId: S3Origin
           AllowedMethods:
@@ -293,6 +298,7 @@ Resources:
         Aliases:
           - !If [NeedsNewRedirectBucket, !Ref RedirectBucket, !Ref PreExistingRedirectBucket]
         PriceClass: PriceClass_100
+        HttpVersion: http2
         Origins:
           -
             DomainName: !Join ["", [!If [NeedsNewRedirectBucket, !Ref RedirectBucket, !Ref PreExistingRedirectBucket], ".", !FindInMap [RegionMap, !Ref "AWS::Region", websiteendpoint]]]
@@ -300,7 +306,11 @@ Resources:
             CustomOriginConfig:
               HTTPPort: 80
               HTTPSPort: 443
-              OriginProtocolPolicy: http-only
+              OriginKeepaliveTimeout: 5
+              OriginProtocolPolicy: 'http-only'
+              OriginReadTimeout: 30
+              OriginSSLProtocols:
+                - TLSv1.2
         DefaultCacheBehavior:
           TargetOriginId: RedirectS3Origin
           AllowedMethods:
@@ -353,7 +363,8 @@ Resources:
             DNSName: !GetAtt RedirectCloudFrontDistribution.DomainName
 
   # SNS topic for Git repository activity. Email subscription
-  NotificationTopic:
+  GitNotificationTopic:
+    Condition: UseCodeCommit
     Type: "AWS::SNS::Topic"
     Properties:
       DisplayName: !Sub "Activity in ${DomainName} Git repository"
@@ -370,10 +381,32 @@ Resources:
       RepositoryName: !Ref DomainName
       Triggers:
         - Name: !Sub "Activity in ${DomainName} Git repository"
-          DestinationArn: !Ref NotificationTopic
+          DestinationArn: !Ref GitNotificationTopic
           Events:
             - all
     DeletionPolicy: Retain
+
+  # SNS topic for CodePipeline activity. Email subscription
+  CodePipelineNotificationTopic:
+    Type: "AWS::SNS::Topic"
+    Properties:
+      DisplayName: !Sub "Activity in ${DomainName} CodePipeline"
+      Subscription:
+        - Endpoint: !Ref NotificationEmail
+          Protocol: email
+
+  #CodePipeline notifications
+  CodePipelineNotifications:
+    Type: 'AWS::CodeStarNotifications::NotificationRule'
+    Properties:
+        Name: '${DomainName} CodePipeline Notification Rule'
+        DetailType: BASIC
+        Resource: 'arn:aws:codepipeline:${AWS::Region}:${AWS::AccountID}:${ProjectName}'
+        EventTypeIds:
+            - codepipeline-pipeline-stage-execution-succeeded
+        Targets:
+            - TargetType: SNS
+              TargetAddress: !Ref CodePipelineNotificationTopic
 
   # IAM info for AWS Lambda functions
   LambdaExecutionRole:
